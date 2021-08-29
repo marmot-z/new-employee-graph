@@ -13,8 +13,12 @@
   "author": "zhangxunwei",
   "license": "ISC",
   "dependencies": {
+    "cheerio": "^1.0.0-rc.10",
     "imap": "^0.8.19",
     "mailparser": "^3.3.0",
-    "mailparser-mit": "^1.0.0"
+    "mailparser-mit": "^1.0.0",
+    "mysql": "^2.18.1",
+    "neo4j-driver": "^4.3.3",
+    "request-promise": "^4.2.6"
   }
 }
