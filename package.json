@@ -19,6 +19,7 @@
     "mailparser-mit": "^1.0.0",
     "mysql": "^2.18.1",
     "neo4j-driver": "^4.3.3",
+    "node-xlsx": "^0.17.1",
     "request-promise": "^4.2.6"
   }
 }

@@ -9,8 +9,8 @@ exports.mailTool = {
         return new Promise((resolve, reject) => {
             //构建一个Imap
             let imap = new Imap({
-                user: 'zhangxunwei@dxy.cn', //你的邮箱账号
-                password: 'yaor5#^by90!5ej5', //你的邮箱密码
+                user: process.env.EMAIL_USERNAME, //你的邮箱账号
+                password: process.env.EMAIL_PASSWORD, //你的邮箱密码
                 host: 'imap.exmail.qq.com', //邮箱服务器的主机地址 以腾讯企业邮箱为例子
                 port: 993, //邮箱服务器的端口地址
                 tls: true, //使用安全传输协议

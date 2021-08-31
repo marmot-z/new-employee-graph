@@ -1,4 +1,3 @@
-const { filter } = require('cheerio/lib/api/traversing');
 const neo4j = require('neo4j-driver');
 
 class Neo4jApi {
@@ -13,14 +12,14 @@ class Neo4jApi {
     }
 
     async createEmployeeNode(nodeInfo) {
-        let nodes = await this.findNodesByName('JOB', nodeInfo.job);
+        let nodes = await this.findNodesByProperty('JOB', 'name', nodeInfo.job);
         if (nodes.length === 0) {
-            await this.createNode('JOB', nodeInfo.job);
+            await this.createJobNode(nodeInfo.job);
         }
 
         await this.createNode('EMPLOYEE', nodeInfo);
         await this.createJobEmployeeRelation(nodeInfo.job, nodeInfo.name);
-        await this.createEmployeeRelation();
+        await this.createEmployeeRelation(nodeInfo.name, nodeInfo);
     }
 
     async createNode(label, nodeInfo) {
@@ -32,6 +31,7 @@ class Neo4jApi {
                     Neo4jApi.CREATE_EMPLOYEE_NODE_STATEMENT;
 
             await session.run(statement, nodeInfo);
+            console.log(`创建了 ${nodeInfo.name} ${label}节点`);
         } catch(e) {
             console.error(e);
         } finally {
@@ -39,16 +39,23 @@ class Neo4jApi {
         }
     }
 
-    async findNodesByName(label, name) {
+    async findNodesByProperty(label, property, propertyVal) {
         const session = this.driver.session({database: this.database});
 
         try {
-            let statement = `match(n:${label}{name: '${name}'}) return n;`;
-            let result = await session.run(statement, {});
+            let statement;
+            if (Array.isArray(propertyVal)) {
+                let condition = propertyVal.map(v => `'${v}' in n.${property}`).join(' or ');
+                statement = `match(n:${label}) where ${condition} return n;`;
+            } else {
+                statement = `match(n:${label}{${property}: $propertyVal}) return n;`;
+            }
+
+            let result = await session.run(statement, {propertyVal});
 
             if (Array.isArray(result.records) && result.records.length > 0) {
                 return result.records.map(r => {
-                    return r.__fields[0].properties;
+                    return r._fields[0].properties;
                 });
             }
 
@@ -65,6 +72,7 @@ class Neo4jApi {
 
         try {
             await session.run(Neo4jApi.CREATE_JOB_EMPLOYEE_RELATION_STATEMENT, {jobName, employeeName});
+            console.info(`新增 ${jobName} JOB节点-${employeeName} EMPLOYEE节点关系`);
         } catch(e) {
             console.error(e);
         } finally {
@@ -73,61 +81,42 @@ class Neo4jApi {
     }
 
     async createEmployeeRelation(name, properties) {
-        // let statement = 'match(n) where ';
+        if ('name' in properties) {
+            delete properties.name;
+        }
+        if ('job' in properties) {
+            delete properties.job;
+        }
 
-        // let queryCondition = Object.keys(properties)
-        //     .filter(key => {
-        //         let val = properties[key];
-        //         return typeof val !== 'undefined' && 
-        //             typeof val !== null && 
-        //             (Array.isArray(val) ? 
-        //                 val.length > 0 :
-        //                 typeof val === 'string' ? 
-        //                     val.trim() !== '' :
-        //                     true);
-        //     })
-        //     .map(key => {
-        //         let val = properties[key];
-        //         let wrapper = (v) => typeof wrapper === 'number' ? v : `'${v}'`;
-        //         return Array.isArray(val) ? 
-        //                 '(' + val.map(wrapper).join(' or ') + ')' :
-        //                 wrapper(val);
-        //     })
-        //     .join(' and ');
-        // statement += queryCondition + ' '
+        for (let key in properties) {
+            let val = properties[key];
 
-        // let keys = Object.keys(properties)
-        //     .filter(key => {
-        //         let val = properties[key];
-        //         return 
-        //     });
-
-        // let nonNull = (val) => {
-        //     typeof val !== 'undefined' && 
-        //         typeof val !== null && 
-        //         (Array.isArray(val) ? 
-        //             val.length > 0 :
-        //             typeof val === 'string' ? 
-        //                 val.trim() !== '' :
-        //                 true);
-        // };
-        // for (let key in properties) {
-        //     if (nonNull.call(null, val)) {
-        //         await this._createEmployeeRelation(key, properties[key])
-        //     }
-        // }
-
-        // 根据hobby查询对应的节点
-        // 创建当前节点和目标节点的对应关系
+            if (val) {
+                await this._createEmployeeRelation(name, key, val);
+            }
+        }
     }
 
-    async _createEmployeeRelation(proerty, propertyVal) {
+    async _createEmployeeRelation(name, property, propertyVal) {
         const session = this.driver.session({database: this.database});
 
         try {
-            let statment = Neo4jApi.CREATE_EMPLOYEE_RELATION_STATEMENT.replace(/$property/g, proerty)
-                            .replace(/$$propertyUpper/g, proerty.toUpperCase());
-            await session.run(statment, {propertyVal});
+            let result = await this.findNodesByProperty('EMPLOYEE', property, propertyVal);
+
+            if (result.length > 0) {
+                for (let item of result) {
+                    if (item.name !== name) {
+                        if (Array.isArray(propertyVal)) {
+                            propertyVal = findIntersection(propertyVal, item[property]);
+                        }
+
+                        let statment = Neo4jApi.CREATE_EMPLOYEE_RELATION_STATEMENT.replace(/\$property\b/g, property)
+                                .replace(/\$propertyUpper/g, property.toUpperCase());
+                        await session.run(statment, {fromName: name, toName: item.name, propertyVal});
+                        console.info(`为 ${name} EMPLOYEE节点新增{${property}:${propertyVal}}关系`);
+                    }
+                }
+            }
         } catch(e) {
             console.error(e);
         } finally {
@@ -153,30 +142,50 @@ Neo4jApi.CREATE_EMPLOYEE_NODE_STATEMENT = 'create (\
 Neo4jApi.CREATE_JOB_EMPLOYEE_RELATION_STATEMENT = 'match (a:JOB{name: $jobName}), (b:EMPLOYEE{name: $employeeName}) \
     create (a)-[:PROFESSION]->(b);';
 Neo4jApi.CREATE_EMPLOYEE_RELATION_STATEMENT = 'match (from:EMPLOYEE{name: $fromName}), (to:EMPLOYEE{name: $toName}) \
-    create (from)-[:SIMILAR_$propertyUpper{$property: $propertyVal}]->(to)';
+    merge (to)-[:SIMILAR_$propertyUpper{$property: $propertyVal}]->(from)';
+
+function findIntersection(arr1, arr2) {
+    if (arr1.length === 0 || arr2.length === 0) {
+        return [];
+    } 
+
+    return arr1.filter(i => arr2.indexOf(i) > -1);
+}
 
 let option = {
-    host: '101.34.168.17',
-    port: 7687,
-    user: 'neo4j',
-    password: 'zxw123',
+    host: process.env.NEO4J_HOST,
+    port: process.env.NEO4J_PORT,
+    user: process.env.NEO4J_USERNAME,
+    password: process.env.NEO4J_PASSWORD,
     database: 'neo4j'
 };
 
 (async () => {
     let api = new Neo4jApi(option);
 
-    let nodeInfo = {
+    let nodeInfo1 = {
         job: '运营实习生',
         name: '毛硕晴',
         sex: '女',
-        age: -1,
+        age: 24,
         hometown: '北京',
         school: '',
-        hobby: ['摄影', '看比赛', '户外活动']
+        hobby: ['摄影', '看比赛', '户外活动', '听歌']
     };
-    // await api.createNode(nodeInfo);
-    // await api.createJobNode({name: '运营实习生'});
-    await api.findNodeByName('JOB', '运营实习生');
-    api.close();
+    let nodeInfo2 = {
+        job: '运营实习生',
+        name: '董博宇',
+        sex: '男',
+        age: 24,
+        hometown: '哈尔滨',
+        school: '',
+        hobby: ['听歌', '看剧', '看电影', '散步']
+    };
+
+    try {
+        await api.createEmployeeNode(nodeInfo1);
+        await api.createEmployeeNode(nodeInfo2);
+    } finally {
+        api.close();
+    }
 })();
